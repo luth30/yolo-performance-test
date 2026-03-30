@@ -1,0 +1,17 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Model (besar, jangan di-upload)
+models/*.pt
+
+# Results (output eksperimen)
+results/*.csv
+results/*.png
+
+# OS files
+.DS_Store
+
