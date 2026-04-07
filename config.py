@@ -1,5 +1,5 @@
 VIDEO_PATH = "data/video.mp4"
-MODEL_PATH = "models/yolov8n.pt"
+MODEL_PATH = "models/yolov8s.pt"
 
 LINE_Y = 300
 

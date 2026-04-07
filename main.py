@@ -2,9 +2,6 @@ from ultralytics import YOLO
 import cv2
 import time
 import statistics
-import torch
-import torch
-device = "mps" if torch.backends.mps.is_available() else "cpu"
 
 from config import *
 from utils.monitor import get_system_usage
@@ -15,13 +12,9 @@ from utils.logger import init_csv, write_log
 def main():
     print("Starting YOLO performance test...")
 
-    # load model
     model = YOLO(MODEL_PATH)
-
-    # load video
     cap = cv2.VideoCapture(VIDEO_PATH)
 
-    # cek video
     if not cap.isOpened():
         print("ERROR: Video tidak bisa dibuka")
         return
@@ -34,10 +27,14 @@ def main():
     inference_list = []
     cpu_list = []
     ram_list = []
+    confidence_list = []
+
+    # ===== METRICS =====
+    TP = 0
+    FP = 0
+    FN = 0
 
     start_time = time.time()
-
-    # init csv
     init_csv(CSV_PATH)
 
     while cap.isOpened():
@@ -47,41 +44,60 @@ def main():
 
         frame_total += 1
 
-        # ===== DEBUG frame pertama =====
-        if frame_total == 1:
-            print("Frame shape:", frame.shape)
-
-        # ===== INFERENCE + TRACKING =====
+        # ===== INFERENCE =====
         t1 = time.time()
         results = model.track(frame, conf=0.05, persist=True, imgsz=480)
         t2 = time.time()
 
-        infer_time = t2 - t1
-        inference_list.append(infer_time)
+        inference_time = t2 - t1
+        inference_list.append(inference_time)
 
-        # ===== DEBUG DETEKSI =====
-        if frame_total == 1:
-            print("DEBUG DETECTION:", results[0].boxes)
-
-        # ===== MONITORING =====
+        # ===== SYSTEM =====
         cpu, ram = get_system_usage()
         cpu_list.append(cpu)
         ram_list.append(ram)
 
-        # ===== COUNTING =====
+        # ===== DETECTION =====
+        detected_this_frame = 0
+
+        if results and results[0].boxes is not None and len(results[0].boxes) > 0:
+            for box in results[0].boxes:
+                conf = float(box.conf[0])
+                label = model.names[int(box.cls[0])]
+
+                if label in VEHICLE_LABELS:
+                    confidence_list.append(conf)
+                    detected_this_frame += 1
+
+                    # heuristic TP/FP
+                    if conf >= 0.5:
+                        TP += 1
+                    else:
+                        FP += 1
+        else:
+            FN += 1  # miss detection
+
+        # ===== COUNT =====
         count = count_vehicles(results, model, LINE_Y, VEHICLE_LABELS, seen_ids)
         vehicle_total += count
 
-        # ===== LOGGING =====
-        write_log(CSV_PATH, [frame_total, infer_time, cpu, ram])
+        # ===== LOG =====
+        write_log(CSV_PATH, [frame_total, inference_time, cpu, ram])
 
     cap.release()
 
-    end_time = time.time()
-    duration = end_time - start_time
-
+    # ===== CALCULATION =====
+    duration = time.time() - start_time
     fps = frame_total / duration if duration > 0 else 0
 
+    precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+    recall = TP / (TP + FN) if (TP + FN) > 0 else 0
+    f1_score = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall) > 0 else 0
+    )
+
+    # ===== OUTPUT =====
     print("\n=== RESULT ===")
     print(f"Frames processed : {frame_total}")
     print(f"Total time       : {duration:.2f}s")
@@ -97,6 +113,20 @@ def main():
     print(f"RAM avg : {statistics.mean(ram_list):.2f}%")
 
     print("\nVehicles counted:", vehicle_total)
+
+    print("\n=== EVALUATION ===")
+
+    if confidence_list:
+        print("\nConfidence:")
+        print(f"avg : {statistics.mean(confidence_list):.4f}")
+        print(f"max : {max(confidence_list):.4f}")
+        print(f"min : {min(confidence_list):.4f}")
+    else:
+        print("Confidence: tidak ada data")
+
+    print("\nPrecision : {:.4f}".format(precision))
+    print("Recall    : {:.4f}".format(recall))
+    print("F1 Score  : {:.4f}".format(f1_score))
 
 
 if __name__ == "__main__":
